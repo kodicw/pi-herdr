@@ -37,6 +37,16 @@ function parseJson(output: string): unknown {
   }
 }
 
+// Pane/tab/workspace IDs look like wH, wH:t3, wH:pF. Validate before
+// interpolating into shell commands to prevent injection from LLM input.
+const ID_RE = /^[A-Za-z0-9:_-]+$/;
+function assertValidId(id: string, field: string): string {
+  if (typeof id !== "string" || !ID_RE.test(id)) {
+    throw new Error(`Invalid ${field}: ${JSON.stringify(id)}`);
+  }
+  return id;
+}
+
 // ============================================================================
 // Tool Definitions
 // ============================================================================
@@ -78,6 +88,7 @@ const herdrReadTool = defineTool({
     if (!herdrAvailable()) {
       return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
+    assertValidId(params.paneId, "paneId");
     const lines = params.lines ?? 50;
     const source = params.source ?? "recent";
     const output = herdrExec(`pane read ${params.paneId} --source ${source} --lines ${lines}`);
@@ -98,6 +109,7 @@ const herdrRunTool = defineTool({
     if (!herdrAvailable()) {
       return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
+    assertValidId(params.paneId, "paneId");
     herdrExec(`pane run ${params.paneId} ${JSON.stringify(params.command)}`);
     return { content: [{ type: "text" as const, text: `Command sent to pane ${params.paneId}` }], details: { paneId: params.paneId } };
   },
@@ -120,6 +132,7 @@ const herdrSplitTool = defineTool({
     if (!herdrAvailable()) {
       return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
+    assertValidId(params.paneId, "paneId");
     const noFocusFlag = params.noFocus !== false ? "--no-focus" : "";
     const output = herdrExec(`pane split ${params.paneId} --direction ${params.direction} ${noFocusFlag}`);
     const data = parseJson(output);
@@ -145,6 +158,7 @@ const herdrWaitOutputTool = defineTool({
     if (!herdrAvailable()) {
       return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
+    assertValidId(params.paneId, "paneId");
     const timeout = params.timeout ?? 30000;
     const regexFlag = params.regex ? "--regex" : "";
     try {
@@ -175,6 +189,7 @@ const herdrWaitAgentTool = defineTool({
     if (!herdrAvailable()) {
       return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
+    assertValidId(params.paneId, "paneId");
     const timeout = params.timeout ?? 60000;
     try {
       herdrExec(`wait agent-status ${params.paneId} --status ${params.status} --timeout ${timeout}`);
@@ -197,7 +212,7 @@ const herdrTabsTool = defineTool({
     if (!herdrAvailable()) {
       return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
-    const wsFlag = params.workspaceId ? `--workspace ${params.workspaceId}` : "";
+    const wsFlag = params.workspaceId ? `--workspace ${assertValidId(params.workspaceId, "workspaceId")}` : "";
     const output = herdrExec(`tab list ${wsFlag}`);
     const data = parseJson(output);
     return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: { tabs: data } };
@@ -236,15 +251,17 @@ export default function (pi: ExtensionAPI) {
 
     try {
       const panesOutput = herdrExec("pane list");
-      const panes = parseJson(panesOutput) as { panes?: Array<{ id: string; focused: boolean; workspace_id: string; tab_id: string }> };
-      const focused = panes.panes?.find((p) => p.focused);
+      const parsed = parseJson(panesOutput) as {
+        result?: { panes?: Array<{ pane_id: string; focused: boolean; workspace_id: string; tab_id: string }> };
+      };
+      const focused = parsed.result?.panes?.find((p) => p.focused);
       if (focused) {
         currentPaneInfo = {
-          paneId: focused.id,
+          paneId: focused.pane_id,
           workspace: focused.workspace_id,
           tab: focused.tab_id,
         };
-        ctx.ui.setStatus("herdr", `herdr: ${focused.workspace_id}:${focused.tab_id}:${focused.id}`);
+        ctx.ui.setStatus("herdr", `herdr: ${focused.workspace_id}:${focused.tab_id}:${focused.pane_id}`);
       } else {
         ctx.ui.setStatus("herdr", "herdr: active");
       }
@@ -285,20 +302,24 @@ export default function (pi: ExtensionAPI) {
           break;
 
         case "panes":
-        case "pane":
+        case "pane": {
           try {
             const output = herdrExec("pane list");
-            const data = parseJson(output) as { panes?: Array<{ id: string; focused: boolean; agent_status?: string }> };
-            const lines = data.panes?.map((p) => {
-              const focused = p.focused ? " (focused)" : "";
-              const status = p.agent_status ? ` [${p.agent_status}]` : "";
-              return `${p.id}${focused}${status}`;
-            }) ?? ["No panes found"];
-            ctx.ui.notify(lines.join("\n"), "info");
+            const data = parseJson(output) as {
+              result?: { panes?: Array<{ pane_id: string; focused: boolean; agent?: string; agent_status?: string }> };
+            };
+            const lines = data.result?.panes?.map((p) => {
+              const focus = p.focused ? " \u25cf" : "";
+              const agent = p.agent ? ` [${p.agent}]` : "";
+              const status = p.agent_status ? ` (${p.agent_status})` : "";
+              return `  ${p.pane_id}${focus}${agent}${status}`;
+            }) ?? ["  No panes found"];
+            ctx.ui.notify("Panes:\n" + lines.join("\n"), "info");
           } catch (e) {
             ctx.ui.notify(`Error: ${e}`, "error");
           }
           break;
+        }
 
         case "tabs":
         case "tab":
