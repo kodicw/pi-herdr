@@ -54,8 +54,8 @@ function assertValidId(id: string, field: string): string {
 const HERDR_CMD_RE = /(?:^|;(?:\s*|&+|\|*)|&+\s*|\|+\s*|\(\s*|`\s*|^\s*sudo\s+)herdr\s+(\w+)/;
 const HERDR_TOOL_HINTS: Record<string, { tool: string; hint: string }> = {
   pane: { tool: "herdr_panes / herdr_read / herdr_run / herdr_split / herdr_send / herdr_pane_close", hint: "use herdr_panes to list, herdr_read to read output, herdr_run to run a command, herdr_split to split, herdr_send to send text or keys without Enter, or herdr_pane_close to close a pane" },
-  tab: { tool: "herdr_tabs", hint: "use the herdr_tabs tool" },
-  workspace: { tool: "herdr_workspaces", hint: "use the herdr_workspaces tool" },
+  tab: { tool: "herdr_tabs / herdr_tab_create / herdr_tab_focus / herdr_tab_rename / herdr_tab_close", hint: "use herdr_tabs to list, herdr_tab_create to create, herdr_tab_focus to focus, herdr_tab_rename to rename, or herdr_tab_close to close a tab" },
+  workspace: { tool: "herdr_workspaces / herdr_workspace_create / herdr_workspace_focus / herdr_workspace_rename / herdr_workspace_close", hint: "use herdr_workspaces to list, herdr_workspace_create to create, herdr_workspace_focus to focus, herdr_workspace_rename to rename, or herdr_workspace_close to close a workspace" },
   wait: { tool: "herdr_wait_output / herdr_wait_agent", hint: "use herdr_wait_output to wait for text, or herdr_wait_agent to wait for an agent status" },
 };
 
@@ -339,6 +339,282 @@ const herdrWorkspacesTool = defineTool({
   },
 });
 
+const herdrWorkspaceCreateTool = defineTool({
+  name: "herdr_workspace_create",
+  label: "Herdr Workspace Create",
+  description: "Create a new herdr workspace",
+  parameters: Type.Object({
+    cwd: Type.Optional(Type.String({ description: "Initial working directory for the workspace" })),
+    label: Type.Optional(Type.String({ description: "Human-readable label for the workspace" })),
+    env: Type.Optional(Type.Union([
+      Type.String({ description: "Environment variable (e.g. 'KEY=VALUE')" }),
+      Type.Array(Type.String({ description: "Environment variables (e.g. ['KEY1=VALUE1', 'KEY2=VALUE2'])" })),
+    ], { description: "Environment variables for the workspace (--env KEY=VALUE, repeatable)" })),
+    noFocus: Type.Optional(Type.Boolean({ description: "Keep focus on current workspace (default: true)" })),
+  }),
+  promptSnippet: "Create a herdr workspace",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    const args = ["workspace", "create"];
+    if (params.cwd) {
+      args.push("--cwd", params.cwd);
+    }
+    if (params.label) {
+      args.push("--label", params.label);
+    }
+    if (params.env) {
+      const envVars = Array.isArray(params.env) ? params.env : [params.env];
+      for (const e of envVars) {
+        args.push("--env", e);
+      }
+    }
+    if (params.noFocus === false) {
+      args.push("--focus");
+    } else {
+      args.push("--no-focus");
+    }
+    try {
+      const output = herdrExec(args);
+      const data = parseJson(output);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: { workspace: data } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to create workspace: ${e}` }], details: {}, isError: true };
+    }
+  },
+});
+
+const herdrWorkspaceGetTool = defineTool({
+  name: "herdr_workspace_get",
+  label: "Herdr Workspace Get",
+  description: "Get detailed information about a herdr workspace by ID",
+  parameters: Type.Object({
+    workspaceId: Type.String({ description: "Workspace ID to query" }),
+  }),
+  promptSnippet: "Get herdr workspace details",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.workspaceId, "workspaceId");
+    try {
+      const output = herdrExec(["workspace", "get", params.workspaceId]);
+      const data = parseJson(output);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: { workspace: data } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to get workspace info: ${e}` }], details: {}, isError: true };
+    }
+  },
+});
+
+const herdrWorkspaceFocusTool = defineTool({
+  name: "herdr_workspace_focus",
+  label: "Herdr Workspace Focus",
+  description: "Focus a herdr workspace by ID",
+  parameters: Type.Object({
+    workspaceId: Type.String({ description: "Workspace ID to focus" }),
+  }),
+  promptSnippet: "Focus a herdr workspace",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.workspaceId, "workspaceId");
+    try {
+      herdrExec(["workspace", "focus", params.workspaceId]);
+      return { content: [{ type: "text" as const, text: `Focused workspace ${params.workspaceId}` }], details: { workspaceId: params.workspaceId, focused: true } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to focus workspace ${params.workspaceId}: ${e}` }], details: { workspaceId: params.workspaceId, focused: false }, isError: true };
+    }
+  },
+});
+
+const herdrWorkspaceRenameTool = defineTool({
+  name: "herdr_workspace_rename",
+  label: "Herdr Workspace Rename",
+  description: "Rename a herdr workspace",
+  parameters: Type.Object({
+    workspaceId: Type.String({ description: "Workspace ID to rename" }),
+    label: Type.String({ description: "New label for the workspace" }),
+  }),
+  promptSnippet: "Rename a herdr workspace",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.workspaceId, "workspaceId");
+    try {
+      herdrExec(["workspace", "rename", params.workspaceId, params.label]);
+      return { content: [{ type: "text" as const, text: `Renamed workspace ${params.workspaceId} to "${params.label}"` }], details: { workspaceId: params.workspaceId, renamed: true, label: params.label } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to rename workspace ${params.workspaceId}: ${e}` }], details: { workspaceId: params.workspaceId, renamed: false }, isError: true };
+    }
+  },
+});
+
+const herdrWorkspaceCloseTool = defineTool({
+  name: "herdr_workspace_close",
+  label: "Herdr Workspace Close",
+  description: "Close a herdr workspace by ID",
+  parameters: Type.Object({
+    workspaceId: Type.String({ description: "Workspace ID to close" }),
+  }),
+  promptSnippet: "Close a herdr workspace",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.workspaceId, "workspaceId");
+    try {
+      herdrExec(["workspace", "close", params.workspaceId]);
+      return { content: [{ type: "text" as const, text: `Closed workspace ${params.workspaceId}` }], details: { workspaceId: params.workspaceId, closed: true } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to close workspace ${params.workspaceId}: ${e}` }], details: { workspaceId: params.workspaceId, closed: false }, isError: true };
+    }
+  },
+});
+
+const herdrTabCreateTool = defineTool({
+  name: "herdr_tab_create",
+  label: "Herdr Tab Create",
+  description: "Create a new tab in a workspace",
+  parameters: Type.Object({
+    workspaceId: Type.Optional(Type.String({ description: "Workspace ID to create the tab in (default: current)" })),
+    cwd: Type.Optional(Type.String({ description: "Initial working directory for the tab" })),
+    label: Type.Optional(Type.String({ description: "Human-readable label for the tab" })),
+    env: Type.Optional(Type.Union([
+      Type.String({ description: "Environment variable (e.g. 'KEY=VALUE')" }),
+      Type.Array(Type.String({ description: "Environment variables (e.g. ['KEY1=VALUE1', 'KEY2=VALUE2'])" })),
+    ], { description: "Environment variables for the tab (--env KEY=VALUE, repeatable)" })),
+    noFocus: Type.Optional(Type.Boolean({ description: "Keep focus on current tab (default: true)" })),
+  }),
+  promptSnippet: "Create a herdr tab",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    const args = ["tab", "create"];
+    if (params.workspaceId) {
+      args.push("--workspace", assertValidId(params.workspaceId, "workspaceId"));
+    }
+    if (params.cwd) {
+      args.push("--cwd", params.cwd);
+    }
+    if (params.label) {
+      args.push("--label", params.label);
+    }
+    if (params.env) {
+      const envVars = Array.isArray(params.env) ? params.env : [params.env];
+      for (const e of envVars) {
+        args.push("--env", e);
+      }
+    }
+    if (params.noFocus === false) {
+      args.push("--focus");
+    } else {
+      args.push("--no-focus");
+    }
+    try {
+      const output = herdrExec(args);
+      const data = parseJson(output);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: { tab: data } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to create tab: ${e}` }], details: {}, isError: true };
+    }
+  },
+});
+
+const herdrTabGetTool = defineTool({
+  name: "herdr_tab_get",
+  label: "Herdr Tab Get",
+  description: "Get detailed information about a herdr tab by ID",
+  parameters: Type.Object({
+    tabId: Type.String({ description: "Tab ID to query" }),
+  }),
+  promptSnippet: "Get herdr tab details",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.tabId, "tabId");
+    try {
+      const output = herdrExec(["tab", "get", params.tabId]);
+      const data = parseJson(output);
+      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: { tab: data } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to get tab info: ${e}` }], details: {}, isError: true };
+    }
+  },
+});
+
+const herdrTabFocusTool = defineTool({
+  name: "herdr_tab_focus",
+  label: "Herdr Tab Focus",
+  description: "Focus a herdr tab by ID",
+  parameters: Type.Object({
+    tabId: Type.String({ description: "Tab ID to focus" }),
+  }),
+  promptSnippet: "Focus a herdr tab",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.tabId, "tabId");
+    try {
+      herdrExec(["tab", "focus", params.tabId]);
+      return { content: [{ type: "text" as const, text: `Focused tab ${params.tabId}` }], details: { tabId: params.tabId, focused: true } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to focus tab ${params.tabId}: ${e}` }], details: { tabId: params.tabId, focused: false }, isError: true };
+    }
+  },
+});
+
+const herdrTabRenameTool = defineTool({
+  name: "herdr_tab_rename",
+  label: "Herdr Tab Rename",
+  description: "Rename a herdr tab",
+  parameters: Type.Object({
+    tabId: Type.String({ description: "Tab ID to rename" }),
+    label: Type.String({ description: "New label for the tab" }),
+  }),
+  promptSnippet: "Rename a herdr tab",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.tabId, "tabId");
+    try {
+      herdrExec(["tab", "rename", params.tabId, params.label]);
+      return { content: [{ type: "text" as const, text: `Renamed tab ${params.tabId} to "${params.label}"` }], details: { tabId: params.tabId, renamed: true, label: params.label } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to rename tab ${params.tabId}: ${e}` }], details: { tabId: params.tabId, renamed: false }, isError: true };
+    }
+  },
+});
+
+const herdrTabCloseTool = defineTool({
+  name: "herdr_tab_close",
+  label: "Herdr Tab Close",
+  description: "Close a herdr tab by ID",
+  parameters: Type.Object({
+    tabId: Type.String({ description: "Tab ID to close" }),
+  }),
+  promptSnippet: "Close a herdr tab",
+  async execute(_toolCallId: string, params: any): Promise<any> {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.tabId, "tabId");
+    try {
+      herdrExec(["tab", "close", params.tabId]);
+      return { content: [{ type: "text" as const, text: `Closed tab ${params.tabId}` }], details: { tabId: params.tabId, closed: true } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to close tab ${params.tabId}: ${e}` }], details: { tabId: params.tabId, closed: false }, isError: true };
+    }
+  },
+});
+
 // ============================================================================
 // Extension
 // ============================================================================
@@ -401,6 +677,16 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(herdrWaitAgentTool);
   pi.registerTool(herdrTabsTool);
   pi.registerTool(herdrWorkspacesTool);
+  pi.registerTool(herdrWorkspaceCreateTool);
+  pi.registerTool(herdrWorkspaceGetTool);
+  pi.registerTool(herdrWorkspaceFocusTool);
+  pi.registerTool(herdrWorkspaceRenameTool);
+  pi.registerTool(herdrWorkspaceCloseTool);
+  pi.registerTool(herdrTabCreateTool);
+  pi.registerTool(herdrTabGetTool);
+  pi.registerTool(herdrTabFocusTool);
+  pi.registerTool(herdrTabRenameTool);
+  pi.registerTool(herdrTabCloseTool);
 
   // Register commands
   pi.registerCommand("herdr", {
@@ -444,28 +730,54 @@ export default function (pi: ExtensionAPI) {
         }
 
         case "tabs":
-        case "tab":
-          try {
-            const args = ["tab", "list"];
-            if (arg) {
-              args.push(...arg.trim().split(/\s+/).filter(Boolean));
+        case "tab": {
+          const [action, ...actionArgs] = rest;
+          if (!action || action === "list" || action.startsWith("-")) {
+            try {
+              const args = ["tab", "list"];
+              if (action) {
+                args.push(action, ...actionArgs);
+              }
+              const output = herdrExec(args);
+              ctx.ui.notify(JSON.stringify(parseJson(output), null, 2), "info");
+            } catch (e) {
+              ctx.ui.notify(`Error: ${e}`, "error");
             }
-            const output = herdrExec(args);
-            ctx.ui.notify(JSON.stringify(parseJson(output), null, 2), "info");
-          } catch (e) {
-            ctx.ui.notify(`Error: ${e}`, "error");
+          } else if (action === "create" || action === "get" || action === "focus" || action === "rename" || action === "close") {
+            try {
+              const output = herdrExec(["tab", action, ...actionArgs]);
+              ctx.ui.notify(output.trim() ? JSON.stringify(parseJson(output), null, 2) : `Tab action "${action}" completed`, "info");
+            } catch (e) {
+              ctx.ui.notify(`Error: ${e}`, "error");
+            }
+          } else {
+            ctx.ui.notify(`Unknown tab action: ${action}. Supported: list, create, get, focus, rename, close`, "error");
           }
           break;
+        }
 
         case "workspaces":
-        case "workspace":
-          try {
-            const output = herdrExec(["workspace", "list"]);
-            ctx.ui.notify(JSON.stringify(parseJson(output), null, 2), "info");
-          } catch (e) {
-            ctx.ui.notify(`Error: ${e}`, "error");
+        case "workspace": {
+          const [action, ...actionArgs] = rest;
+          if (!action || action === "list") {
+            try {
+              const output = herdrExec(["workspace", "list"]);
+              ctx.ui.notify(JSON.stringify(parseJson(output), null, 2), "info");
+            } catch (e) {
+              ctx.ui.notify(`Error: ${e}`, "error");
+            }
+          } else if (action === "create" || action === "get" || action === "focus" || action === "rename" || action === "close") {
+            try {
+              const output = herdrExec(["workspace", action, ...actionArgs]);
+              ctx.ui.notify(output.trim() ? JSON.stringify(parseJson(output), null, 2) : `Workspace action "${action}" completed`, "info");
+            } catch (e) {
+              ctx.ui.notify(`Error: ${e}`, "error");
+            }
+          } else {
+            ctx.ui.notify(`Unknown workspace action: ${action}. Supported: list, create, get, focus, rename, close`, "error");
           }
           break;
+        }
 
         case "read":
           if (!arg) {
