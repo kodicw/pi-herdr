@@ -59,6 +59,17 @@ against. Prints the pane's recent text (not JSON).
 Run a command in a pane. Parameters: `paneId`, `command`. Sends the text plus a
 real Enter key. Use this to start servers, run tests, or drive another agent.
 
+### herdr_send
+Send text (without Enter) or raw keys to a pane. Parameters: `paneId`, `mode`
+(`text` or `keys`), `text` (for mode=text), `keys` (for mode=keys,
+space-separated). Use mode=text for partial input or TUI apps; mode=keys for
+raw keys like `Enter`, `Escape`, `Ctrl+C`. Key tokens must match an allowlist
+(names, `Ctrl+X`, `Alt+X`, `F1`-`F12`); otherwise the call errors.
+
+### herdr_pane_close
+Close a pane by ID. Parameters: `paneId`. Use to clean up panes you created
+once their work is done.
+
 ### herdr_split
 Split a pane. Parameters: `paneId`, `direction` (`right` or `down`),
 `noFocus` (default true keeps focus on your pane). Returns the new pane at

@@ -51,7 +51,7 @@ function assertValidId(id: string, field: string): string {
 // start of string, or after a shell separator (; & | ( ` or whitespace).
 const HERDR_CMD_RE = /(?:^|;(?:\s*|&+|\|*)|&+\s*|\|+\s*|\(\s*|`\s*|^\s*sudo\s+)herdr\s+(\w+)/;
 const HERDR_TOOL_HINTS: Record<string, { tool: string; hint: string }> = {
-  pane: { tool: "herdr_panes / herdr_read / herdr_run / herdr_split", hint: "use herdr_panes to list panes, herdr_read to read output, herdr_run to run a command, or herdr_split to split a pane" },
+  pane: { tool: "herdr_panes / herdr_read / herdr_run / herdr_split / herdr_send / herdr_pane_close", hint: "use herdr_panes to list, herdr_read to read output, herdr_run to run a command, herdr_split to split, herdr_send to send text or keys without Enter, or herdr_pane_close to close a pane" },
   tab: { tool: "herdr_tabs", hint: "use the herdr_tabs tool" },
   workspace: { tool: "herdr_workspaces", hint: "use the herdr_workspaces tool" },
   wait: { tool: "herdr_wait_output / herdr_wait_agent", hint: "use herdr_wait_output to wait for text, or herdr_wait_agent to wait for an agent status" },
@@ -237,6 +237,65 @@ const herdrTabsTool = defineTool({
   },
 });
 
+const herdrSendTool = defineTool({
+  name: "herdr_send",
+  label: "Herdr Send",
+  description: "Send text (no Enter) or raw keys to a herdr pane. Use mode=text for partial input or TUI apps that react to keystrokes; mode=keys for keys like Enter, Escape, Ctrl+C.",
+  parameters: Type.Object({
+    paneId: Type.String({ description: "Pane ID to send to" }),
+    mode: Type.Union([Type.Literal("text"), Type.Literal("keys")], { description: "text = send string without Enter; keys = send raw key names (e.g. Enter, Escape, Ctrl+C)" }),
+    text: Type.Optional(Type.String({ description: "Text to send (mode=text)" })),
+    keys: Type.Optional(Type.String({ description: "Key names to send, space-separated (mode=keys, e.g. 'Enter' or 'Escape Ctrl+C')" })),
+  }),
+  promptSnippet: "Send text or keys to a herdr pane (no Enter)",
+  async execute(_toolCallId, params) {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.paneId, "paneId");
+    if (params.mode === "text") {
+      const text = params.text ?? "";
+      herdrExec(`pane send-text ${params.paneId} ${JSON.stringify(text)}`);
+      return { content: [{ type: "text" as const, text: `Text sent to pane ${params.paneId} (no Enter)` }], details: { paneId: params.paneId, mode: "text", length: text.length } };
+    }
+    // mode === "keys" — validate each key token against a safe allowlist.
+    const rawKeys = (params.keys ?? "").trim();
+    if (!rawKeys) {
+      return { content: [{ type: "text" as const, text: "mode=keys requires the keys parameter (e.g. 'Enter' or 'Escape Ctrl+C')" }], details: {}, isError: true };
+    }
+    const tokens = rawKeys.split(/\s+/);
+    for (const k of tokens) {
+      if (!/^([A-Za-z0-9]+|[Cc]trl[-+][A-Za-z]|[Aa]lt[-+][A-Za-z]|F[0-9]{1,2})$/.test(k)) {
+        return { content: [{ type: "text" as const, text: `Invalid key token: ${JSON.stringify(k)}. Use names like Enter, Escape, Tab, Backspace, Ctrl+C, Alt+F4, F1-F12.` }], details: {}, isError: true };
+      }
+    }
+    herdrExec(`pane send-keys ${params.paneId} ${tokens.join(" ")}`);
+    return { content: [{ type: "text" as const, text: `Keys sent to pane ${params.paneId}: ${tokens.join(" ")}` }], details: { paneId: params.paneId, mode: "keys", keys: tokens } };
+  },
+});
+
+const herdrPaneCloseTool = defineTool({
+  name: "herdr_pane_close",
+  label: "Herdr Pane Close",
+  description: "Close a herdr pane by ID",
+  parameters: Type.Object({
+    paneId: Type.String({ description: "Pane ID to close" }),
+  }),
+  promptSnippet: "Close a herdr pane",
+  async execute(_toolCallId, params) {
+    if (!herdrAvailable()) {
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
+    }
+    assertValidId(params.paneId, "paneId");
+    try {
+      herdrExec(`pane close ${params.paneId}`);
+      return { content: [{ type: "text" as const, text: `Closed pane ${params.paneId}` }], details: { paneId: params.paneId, closed: true } };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Failed to close pane ${params.paneId}: ${e}` }], details: { paneId: params.paneId, closed: false }, isError: true };
+    }
+  },
+});
+
 const herdrWorkspacesTool = defineTool({
   name: "herdr_workspaces",
   label: "Herdr Workspaces",
@@ -308,6 +367,8 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(herdrReadTool);
   pi.registerTool(herdrRunTool);
   pi.registerTool(herdrSplitTool);
+  pi.registerTool(herdrSendTool);
+  pi.registerTool(herdrPaneCloseTool);
   pi.registerTool(herdrWaitOutputTool);
   pi.registerTool(herdrWaitAgentTool);
   pi.registerTool(herdrTabsTool);
