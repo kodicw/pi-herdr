@@ -13,6 +13,11 @@ commands, read output, and coordinate with sibling agents.
 running inside herdr (`HERDR_ENV=1`). If a tool returns "herdr not available",
 you are not inside herdr and these tools cannot be used.
 
+**Do not call the raw `herdr` CLI via bash.** The extension intercepts
+`herdr <subcommand>` bash calls and blocks them with an error pointing you to
+the matching `herdr_*` tool. Always use the registered tools below — never
+shell out to `herdr`.
+
 ## important: discover IDs dynamically
 
 Pane, tab, and workspace IDs are **compact live IDs** that can change when tabs,

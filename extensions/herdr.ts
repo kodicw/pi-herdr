@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { defineTool } from "@earendil-works/pi-coding-agent";
+import { defineTool, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { execSync } from "node:child_process";
 
@@ -45,6 +45,24 @@ function assertValidId(id: string, field: string): string {
     throw new Error(`Invalid ${field}: ${JSON.stringify(id)}`);
   }
   return id;
+}
+
+// Matches a bare `herdr <subcommand>` invocation at a command position:
+// start of string, or after a shell separator (; & | ( ` or whitespace).
+const HERDR_CMD_RE = /(?:^|;(?:\s*|&+|\|*)|&+\s*|\|+\s*|\(\s*|`\s*|^\s*sudo\s+)herdr\s+(\w+)/;
+const HERDR_TOOL_HINTS: Record<string, { tool: string; hint: string }> = {
+  pane: { tool: "herdr_panes / herdr_read / herdr_run / herdr_split", hint: "use herdr_panes to list panes, herdr_read to read output, herdr_run to run a command, or herdr_split to split a pane" },
+  tab: { tool: "herdr_tabs", hint: "use the herdr_tabs tool" },
+  workspace: { tool: "herdr_workspaces", hint: "use the herdr_workspaces tool" },
+  wait: { tool: "herdr_wait_output / herdr_wait_agent", hint: "use herdr_wait_output to wait for text, or herdr_wait_agent to wait for an agent status" },
+};
+
+function detectHerdrCli(command: string): { subcommand: string; tool: string; hint: string } | null {
+  const m = HERDR_CMD_RE.exec(command);
+  if (!m) return null;
+  const sub = m[1] ?? "";
+  const entry = HERDR_TOOL_HINTS[sub] ?? { tool: "herdr_* tools", hint: "use the herdr_* tools provided by the pi-herdr extension instead of the raw herdr CLI" };
+  return { subcommand: sub, tool: entry.tool, hint: entry.hint };
 }
 
 // ============================================================================
@@ -241,6 +259,21 @@ const herdrWorkspacesTool = defineTool({
 
 export default function (pi: ExtensionAPI) {
   let currentPaneInfo: { paneId: string; workspace: string; tab: string } | null = null;
+
+  // Intercept raw `herdr <cmd>` invocations made through the bash tool and
+  // steer the agent to the corresponding herdr_* extension tool instead.
+  pi.on("tool_call", async (event, ctx) => {
+    if (!isToolCallEventType("bash", event)) return;
+    const cmd = event.input?.command;
+    if (typeof cmd !== "string" || cmd.length === 0) return;
+    const detected = detectHerdrCli(cmd);
+    if (!detected) return;
+    ctx.ui.notify(`herdr CLI blocked — use the extension tool (${detected.tool}); ${detected.hint}.`, "error");
+    return {
+      block: true,
+      reason: `Do not call the raw herdr CLI via bash. Use the pi-herdr extension tool instead: ${detected.tool}. ${detected.hint}. Discover current pane IDs first with herdr_panes. If you need a herdr_* capability that is not provided, call the closest available tool or ask the user.`,
+    };
+  });
 
   // Detect current pane on session start
   pi.on("session_start", async (_event, ctx) => {
