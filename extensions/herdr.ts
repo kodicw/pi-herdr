@@ -8,9 +8,9 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { execSync } from "node:child_process";
-import { StringEnum } from "@earendil-works/pi-ai";
 
 // ============================================================================
 // Helpers
@@ -41,7 +41,7 @@ function parseJson(output: string): unknown {
 // Tool Definitions
 // ============================================================================
 
-const herdrPanesTool = {
+const herdrPanesTool = defineTool({
   name: "herdr_panes",
   label: "Herdr Panes",
   description: "List all panes in the current workspace with their status",
@@ -49,39 +49,43 @@ const herdrPanesTool = {
   promptSnippet: "List herdr panes with agent status",
   async execute() {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available (HERDR_ENV != 1 or herdr not in PATH)" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available (HERDR_ENV != 1 or herdr not in PATH)" }], details: {} };
     }
     const output = herdrExec("pane list");
     const data = parseJson(output);
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       details: { panes: data },
     };
   },
-};
+});
 
-const herdrReadTool = {
+const herdrReadTool = defineTool({
   name: "herdr_read",
   label: "Herdr Read",
   description: "Read output from a specific herdr pane",
   parameters: Type.Object({
     paneId: Type.String({ description: "Pane ID (e.g., 1-1, 1-2)" }),
     lines: Type.Optional(Type.Number({ description: "Number of lines to read (default: 50)" })),
-    source: Type.Optional(StringEnum(["visible", "recent", "recent-unwrapped"] as const)),
+    source: Type.Optional(Type.Union([
+      Type.Literal("visible"),
+      Type.Literal("recent"),
+      Type.Literal("recent-unwrapped"),
+    ])),
   }),
   promptSnippet: "Read output from a herdr pane",
-  async execute(_id: string, params: { paneId: string; lines?: number; source?: string }) {
+  async execute(_toolCallId, params) {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
     const lines = params.lines ?? 50;
     const source = params.source ?? "recent";
     const output = herdrExec(`pane read ${params.paneId} --source ${source} --lines ${lines}`);
-    return { content: [{ type: "text", text: output }], details: { paneId: params.paneId } };
+    return { content: [{ type: "text" as const, text: output }], details: { paneId: params.paneId } };
   },
-};
+});
 
-const herdrRunTool = {
+const herdrRunTool = defineTool({
   name: "herdr_run",
   label: "Herdr Run",
   description: "Run a command in a specific herdr pane",
@@ -90,40 +94,43 @@ const herdrRunTool = {
     command: Type.String({ description: "Command to execute" }),
   }),
   promptSnippet: "Run a command in a herdr pane",
-  async execute(_id: string, params: { paneId: string; command: string }) {
+  async execute(_toolCallId, params) {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
     herdrExec(`pane run ${params.paneId} ${JSON.stringify(params.command)}`);
-    return { content: [{ type: "text", text: `Command sent to pane ${params.paneId}` }], details: { paneId: params.paneId } };
+    return { content: [{ type: "text" as const, text: `Command sent to pane ${params.paneId}` }], details: { paneId: params.paneId } };
   },
-};
+});
 
-const herdrSplitTool = {
+const herdrSplitTool = defineTool({
   name: "herdr_split",
   label: "Herdr Split",
   description: "Split a pane horizontally or vertically",
   parameters: Type.Object({
     paneId: Type.String({ description: "Pane ID to split from" }),
-    direction: StringEnum(["right", "down"] as const, { description: "Split direction" }),
+    direction: Type.Union([
+      Type.Literal("right"),
+      Type.Literal("down"),
+    ], { description: "Split direction" }),
     noFocus: Type.Optional(Type.Boolean({ description: "Keep focus on current pane (default: true)" })),
   }),
   promptSnippet: "Split a herdr pane",
-  async execute(_id: string, params: { paneId: string; direction: string; noFocus?: boolean }) {
+  async execute(_toolCallId, params) {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
     const noFocusFlag = params.noFocus !== false ? "--no-focus" : "";
     const output = herdrExec(`pane split ${params.paneId} --direction ${params.direction} ${noFocusFlag}`);
     const data = parseJson(output);
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       details: { split: data },
     };
   },
-};
+});
 
-const herdrWaitOutputTool = {
+const herdrWaitOutputTool = defineTool({
   name: "herdr_wait_output",
   label: "Herdr Wait Output",
   description: "Wait for specific text to appear in a pane",
@@ -134,46 +141,51 @@ const herdrWaitOutputTool = {
     regex: Type.Optional(Type.Boolean({ description: "Treat match as regex" })),
   }),
   promptSnippet: "Wait for output pattern in a herdr pane",
-  async execute(_id: string, params: { paneId: string; match: string; timeout?: number; regex?: boolean }) {
+  async execute(_toolCallId, params) {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
     const timeout = params.timeout ?? 30000;
     const regexFlag = params.regex ? "--regex" : "";
     try {
       herdrExec(`wait output ${params.paneId} --match ${JSON.stringify(params.match)} --timeout ${timeout} ${regexFlag}`);
-      return { content: [{ type: "text", text: `Pattern "${params.match}" found in pane ${params.paneId}` }], details: { success: true } };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Timeout waiting for pattern in pane ${params.paneId}` }], details: { success: false }, isError: true };
+      return { content: [{ type: "text" as const, text: `Pattern "${params.match}" found in pane ${params.paneId}` }], details: { success: true } };
+    } catch {
+      return { content: [{ type: "text" as const, text: `Timeout waiting for pattern in pane ${params.paneId}` }], details: { success: false }, isError: true };
     }
   },
-};
+});
 
-const herdrWaitAgentTool = {
+const herdrWaitAgentTool = defineTool({
   name: "herdr_wait_agent",
   label: "Herdr Wait Agent",
   description: "Wait for an agent in a pane to reach a specific status",
   parameters: Type.Object({
     paneId: Type.String({ description: "Pane ID to watch" }),
-    status: StringEnum(["idle", "working", "blocked", "done"] as const, { description: "Target agent status" }),
+    status: Type.Union([
+      Type.Literal("idle"),
+      Type.Literal("working"),
+      Type.Literal("blocked"),
+      Type.Literal("done"),
+    ], { description: "Target agent status" }),
     timeout: Type.Optional(Type.Number({ description: "Timeout in milliseconds (default: 60000)" })),
   }),
   promptSnippet: "Wait for agent status in a herdr pane",
-  async execute(_id: string, params: { paneId: string; status: string; timeout?: number }) {
+  async execute(_toolCallId, params) {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
     const timeout = params.timeout ?? 60000;
     try {
       herdrExec(`wait agent-status ${params.paneId} --status ${params.status} --timeout ${timeout}`);
-      return { content: [{ type: "text", text: `Agent in pane ${params.paneId} reached status: ${params.status}` }], details: { success: true } };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Timeout waiting for agent status in pane ${params.paneId}` }], details: { success: false }, isError: true };
+      return { content: [{ type: "text" as const, text: `Agent in pane ${params.paneId} reached status: ${params.status}` }], details: { success: true } };
+    } catch {
+      return { content: [{ type: "text" as const, text: `Timeout waiting for agent status in pane ${params.paneId}` }], details: { success: false }, isError: true };
     }
   },
-};
+});
 
-const herdrTabsTool = {
+const herdrTabsTool = defineTool({
   name: "herdr_tabs",
   label: "Herdr Tabs",
   description: "List all tabs in a workspace",
@@ -181,18 +193,18 @@ const herdrTabsTool = {
     workspaceId: Type.Optional(Type.String({ description: "Workspace ID (default: current)" })),
   }),
   promptSnippet: "List herdr tabs",
-  async execute(_id: string, params: { workspaceId?: string }) {
+  async execute(_toolCallId, params) {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
     const wsFlag = params.workspaceId ? `--workspace ${params.workspaceId}` : "";
     const output = herdrExec(`tab list ${wsFlag}`);
     const data = parseJson(output);
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: { tabs: data } };
+    return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: { tabs: data } };
   },
-};
+});
 
-const herdrWorkspacesTool = {
+const herdrWorkspacesTool = defineTool({
   name: "herdr_workspaces",
   label: "Herdr Workspaces",
   description: "List all herdr workspaces",
@@ -200,13 +212,13 @@ const herdrWorkspacesTool = {
   promptSnippet: "List herdr workspaces",
   async execute() {
     if (!herdrAvailable()) {
-      return { content: [{ type: "text", text: "herdr not available" }], details: {} };
+      return { content: [{ type: "text" as const, text: "herdr not available" }], details: {} };
     }
     const output = herdrExec("workspace list");
     const data = parseJson(output);
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: { workspaces: data } };
+    return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: { workspaces: data } };
   },
-};
+});
 
 // ============================================================================
 // Extension
