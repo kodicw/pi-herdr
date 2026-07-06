@@ -81,9 +81,7 @@ Block until text appears in a pane. Parameters: `paneId`, `match`, `timeout`
 times out with an error. Use for "ready on port 3000", "test result", etc.
 
 ### herdr_wait_agent
-Block until an agent reaches a status. Parameters: `paneId`, `status`
-(`idle`, `working`, `blocked`, `done`), `timeout` (ms, default 60000). Use
-`done` to wait until a sibling agent finishes a task.
+Wait for an agent in a pane to reach a status in the background, without blocking the agent. Parameters: `paneId`, `status` (`idle`, `working`, `blocked`, `done`), `timeout` (ms, default 60000). The agent is notified asynchronously via a user message when the status is reached or a timeout occurs. Use `done` to wait until a sibling agent finishes a task.
 
 ## recipes
 
@@ -121,6 +119,8 @@ herdr_read(paneId="<new-pane>", lines=30)
 ```
 herdr_panes()                              # find the sibling pane_id
 herdr_wait_agent(paneId="wR:p1", status="done", timeout=120000)
+# Wait for the status notification message to arrive from the background job before reading:
+# "[herdr_wait_agent] Agent in pane wR:p1 reached status: done"
 herdr_read(paneId="wR:p1", lines=100)      # read what it produced
 ```
 
