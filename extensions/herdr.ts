@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { defineTool, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { defineTool, isBashToolResult, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { execSync, execFileSync, execFile } from "node:child_process";
 
@@ -53,10 +53,22 @@ function assertValidId(id: string, field: string): string {
 // start of string, or after a shell separator (; & | ( ` or whitespace).
 const HERDR_CMD_RE = /(?:^|;(?:\s*|&+|\|*)|&+\s*|\|+\s*|\(\s*|`\s*|^\s*sudo\s+)herdr\s+(\w+)/;
 const HERDR_TOOL_HINTS: Record<string, { tool: string; hint: string }> = {
+  // Noun-group forms (e.g. `herdr pane list`, `herdr workspace create`).
   pane: { tool: "herdr_panes / herdr_read / herdr_run / herdr_split / herdr_send / herdr_pane_close", hint: "use herdr_panes to list, herdr_read to read output, herdr_run to run a command, herdr_split to split, herdr_send to send text or keys without Enter, or herdr_pane_close to close a pane" },
   tab: { tool: "herdr_tabs / herdr_tab_create / herdr_tab_focus / herdr_tab_rename / herdr_tab_close", hint: "use herdr_tabs to list, herdr_tab_create to create, herdr_tab_focus to focus, herdr_tab_rename to rename, or herdr_tab_close to close a tab" },
   workspace: { tool: "herdr_workspaces / herdr_workspace_create / herdr_workspace_focus / herdr_workspace_rename / herdr_workspace_close", hint: "use herdr_workspaces to list, herdr_workspace_create to create, herdr_workspace_focus to focus, herdr_workspace_rename to rename, or herdr_workspace_close to close a workspace" },
   wait: { tool: "herdr_wait_output / herdr_wait_agent", hint: "use herdr_wait_output to wait for text, or herdr_wait_agent to wait for an agent status" },
+  // Verb / plural aliases for the top-level forms an agent is likely to type
+  // directly (e.g. `herdr panes`, `herdr split`, `herdr read`). These name the
+  // single primary dedicated tool so the warning points at the exact tool.
+  panes: { tool: "herdr_panes", hint: "use herdr_panes to list panes with agent status" },
+  read: { tool: "herdr_read", hint: "use herdr_read to read output from a pane" },
+  run: { tool: "herdr_run", hint: "use herdr_run to run a command in a pane" },
+  split: { tool: "herdr_split", hint: "use herdr_split to split a pane" },
+  send: { tool: "herdr_send", hint: "use herdr_send to send text (no Enter) or raw keys to a pane" },
+  close: { tool: "herdr_pane_close / herdr_tab_close / herdr_workspace_close", hint: "use herdr_pane_close, herdr_tab_close, or herdr_workspace_close depending on what you are closing" },
+  tabs: { tool: "herdr_tabs", hint: "use herdr_tabs to list tabs" },
+  workspaces: { tool: "herdr_workspaces", hint: "use herdr_workspaces to list workspaces" },
 };
 
 function detectHerdrCli(command: string): { subcommand: string; tool: string; hint: string } | null {
@@ -623,18 +635,44 @@ export default function (pi: ExtensionAPI) {
   extensionApi = pi;
   let currentPaneInfo: { paneId: string; workspace: string; tab: string } | null = null;
 
-  // Intercept raw `herdr <cmd>` invocations made through the bash tool and
-  // steer the agent to the corresponding herdr_* extension tool instead.
+  // Detect raw `herdr <cmd>` invocations made through the bash tool and steer
+  // the agent toward the corresponding herdr_* extension tool. This only WARNS
+  // — it does NOT block the command, so a genuinely needed raw CLI call can
+  // still proceed. The user is warned here via ctx.ui.notify; a follow-up
+  // tool_result handler appends a reminder to the tool result so the agent
+  // itself sees the suggestion in its own context on the next turn.
   pi.on("tool_call", async (event: any, ctx: any) => {
     if (!isToolCallEventType("bash", event)) return;
     const cmd = event.input?.command;
     if (typeof cmd !== "string" || cmd.length === 0) return;
     const detected = detectHerdrCli(cmd);
     if (!detected) return;
-    ctx.ui.notify(`herdr CLI blocked — use the extension tool (${detected.tool}); ${detected.hint}.`, "error");
+    ctx.ui.notify(
+      `herdr CLI used via bash (${detected.subcommand}) — prefer the extension tool: ${detected.tool}. ${detected.hint}.`,
+      "warning",
+    );
+    // Intentionally do NOT block: let the bash command run. The tool_result
+    // handler below attaches the reminder to the result content.
+  });
+
+  // After a bash command containing a raw `herdr <cmd>` invocation runs, append
+  // a reminder to the tool result so the agent learns to prefer the dedicated
+  // herdr_* tools next time. Non-blocking by design — the command already ran.
+  pi.on("tool_result", async (event: any, _ctx: any) => {
+    if (!isBashToolResult(event)) return;
+    const cmd = event.input?.command;
+    if (typeof cmd !== "string" || cmd.length === 0) return;
+    const detected = detectHerdrCli(cmd);
+    if (!detected) return;
+    const reminder =
+      `\n\n--- pi-herdr reminder ---\n` +
+      `You just ran the raw herdr CLI (\`herdr ${detected.subcommand}\`) via bash. ` +
+      `The pi-herdr extension provides dedicated tools that are preferred: ${detected.tool}. ` +
+      `${detected.hint}. ` +
+      `Use herdr_panes to discover current pane IDs first. ` +
+      `The raw CLI call above was allowed to run, but please use the herdr_* tools going forward.`;
     return {
-      block: true,
-      reason: `Do not call the raw herdr CLI via bash. Use the pi-herdr extension tool instead: ${detected.tool}. ${detected.hint}. Discover current pane IDs first with herdr_panes. If you need a herdr_* capability that is not provided, call the closest available tool or ask the user.`,
+      content: [...event.content, { type: "text" as const, text: reminder }],
     };
   });
 
